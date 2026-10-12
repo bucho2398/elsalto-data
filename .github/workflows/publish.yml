@@ -1,0 +1,64 @@
+name: Publish
+
+# Every push to main: check walls.json, add terrain for walls that are new or moved, and publish
+# walls.json, terrain.json and index.json on GitHub Pages, where the app and widget fetch them.
+# If the check fails nothing is published and phones keep the last good data.
+# Nothing here contacts theCrag: walls.json is edited by hand.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check walls.json
+        run: python tools/check.py walls.json
+
+      - run: pip install numpy pillow
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/elsalto/dem
+          key: dem-z13-${{ hashFiles('walls.json') }}
+          restore-keys: dem-z13-
+
+      - name: Terrain for new or moved walls
+        run: python tools/terrain.py
+
+      - name: Commit terrain
+        run: |
+          if git diff --quiet -- terrain.json; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Terrain for new or moved walls" -- terrain.json
+          git push
+
+      - name: Build the site
+        run: python tools/site.py _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
